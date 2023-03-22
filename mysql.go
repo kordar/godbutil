@@ -1,20 +1,19 @@
 package godbutil
 
 import (
+	"errors"
 	"fmt"
 	"github.com/kordar/goutil"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log"
 	"sync"
 )
 
-import (
-	"gorm.io/driver/mysql"
-)
-
 var instanceOfMysqlPool *MysqlConnPool
 var onceOfMysql sync.Once
+var mysqlConfig gorm.Config
 
 // MysqlConnPool /*
 // 数据库连接操作库
@@ -45,15 +44,15 @@ func (m *MysqlConnPool) getDatabase(db string) (source string) {
 func (m *MysqlConnPool) InitDataPool(db string, db2 ...string) (issucc bool) {
 	// 配置日志等级
 	dbLogLevel := goutil.GetSystemValue("gorm_log_level")
-	config := gorm.Config{}
+	mysqlConfig = gorm.Config{}
 	if dbLogLevel == "error" {
-		config.Logger = logger.Default.LogMode(logger.Error)
+		mysqlConfig.Logger = logger.Default.LogMode(logger.Error)
 	}
 	if dbLogLevel == "warn" {
-		config.Logger = logger.Default.LogMode(logger.Warn)
+		mysqlConfig.Logger = logger.Default.LogMode(logger.Warn)
 	}
 	if dbLogLevel == "info" {
-		config.Logger = logger.Default.LogMode(logger.Info)
+		mysqlConfig.Logger = logger.Default.LogMode(logger.Info)
 	}
 
 	dbs := append(db2, db)
@@ -62,8 +61,7 @@ func (m *MysqlConnPool) InitDataPool(db string, db2 ...string) (issucc bool) {
 			continue
 		}
 		var err error
-		source := m.getDatabase(val)
-		m.mysqlHandlers[val], err = gorm.Open(mysql.Open(source), &config)
+		err = m.Add(val)
 		if err != nil {
 			log.Fatal(err)
 			return false
@@ -73,6 +71,31 @@ func (m *MysqlConnPool) InitDataPool(db string, db2 ...string) (issucc bool) {
 	//关闭数据库，db会被多个goroutine共享，可以不调用
 	// defer db.Close()
 	return true
+}
+
+// Add 添加数据库实例
+func (m *MysqlConnPool) Add(db string) error {
+	if m.mysqlHandlers[db] != nil {
+		return errors.New("MySQL实例已存在")
+	}
+	source := m.getDatabase(db)
+	if obj, err := gorm.Open(mysql.Open(source), &mysqlConfig); err == nil {
+		m.mysqlHandlers[db] = obj
+		return nil
+	} else {
+		return err
+	}
+}
+
+// Remove 移除句柄
+func (m *MysqlConnPool) Remove(db string) {
+	if m.mysqlHandlers[db] != nil {
+		defer delete(m.mysqlHandlers, db)
+		g := m.mysqlHandlers[db]
+		if s, err := g.DB(); err == nil {
+			s.Close()
+		}
+	}
 }
 
 // Handler /*

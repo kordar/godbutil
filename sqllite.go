@@ -1,6 +1,7 @@
 package godbutil
 
 import (
+	"errors"
 	"fmt"
 	"github.com/kordar/goutil"
 	"gorm.io/driver/sqlite"
@@ -12,6 +13,7 @@ import (
 
 var instanceOfSqlitePool *SqliteConnPool
 var onceOfSqlite sync.Once
+var sqliteConfig gorm.Config
 
 // SqliteConnPool /*
 // 数据库连接操作库
@@ -36,15 +38,15 @@ func (m *SqliteConnPool) getDatabase(db string) (source string) {
 func (m *SqliteConnPool) InitDataPool(db string, db2 ...string) (issucc bool) {
 	// 配置日志等级
 	dbLogLevel := goutil.GetSystemValue("gorm_log_level")
-	config := gorm.Config{}
+	sqliteConfig = gorm.Config{}
 	if dbLogLevel == "error" {
-		config.Logger = logger.Default.LogMode(logger.Error)
+		sqliteConfig.Logger = logger.Default.LogMode(logger.Error)
 	}
 	if dbLogLevel == "warn" {
-		config.Logger = logger.Default.LogMode(logger.Warn)
+		sqliteConfig.Logger = logger.Default.LogMode(logger.Warn)
 	}
 	if dbLogLevel == "info" {
-		config.Logger = logger.Default.LogMode(logger.Info)
+		sqliteConfig.Logger = logger.Default.LogMode(logger.Info)
 	}
 
 	dbs := append(db2, db)
@@ -53,8 +55,7 @@ func (m *SqliteConnPool) InitDataPool(db string, db2 ...string) (issucc bool) {
 			continue
 		}
 		var err error
-		source := m.getDatabase(val)
-		m.sqliteHandlers[val], err = gorm.Open(sqlite.Open(source), &config)
+		err = m.Add(val)
 		if err != nil {
 			log.Fatal(err)
 			return false
@@ -64,6 +65,32 @@ func (m *SqliteConnPool) InitDataPool(db string, db2 ...string) (issucc bool) {
 	//关闭数据库，db会被多个goroutine共享，可以不调用
 	// defer db.Close()
 	return true
+}
+
+// Add 添加SQLite实例
+func (m *SqliteConnPool) Add(db string) error {
+	if m.sqliteHandlers[db] != nil {
+		return errors.New("SQLite实例已存在")
+	}
+	source := m.getDatabase(db)
+
+	if obj, err := gorm.Open(sqlite.Open(source), &sqliteConfig); err == nil {
+		m.sqliteHandlers[db] = obj
+		return nil
+	} else {
+		return err
+	}
+}
+
+// Remove 移除句柄
+func (m *SqliteConnPool) Remove(db string) {
+	if m.sqliteHandlers[db] != nil {
+		defer delete(m.sqliteHandlers, db)
+		g := m.sqliteHandlers[db]
+		if s, err := g.DB(); err == nil {
+			s.Close()
+		}
+	}
 }
 
 // Handler /*

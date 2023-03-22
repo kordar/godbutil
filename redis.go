@@ -1,6 +1,7 @@
 package godbutil
 
 import (
+	"errors"
 	"github.com/go-redis/redis"
 	"github.com/kordar/goutil"
 	"log"
@@ -59,6 +60,18 @@ func (p *RedisConnPool) InitDataPool(db string) bool {
 	}
 }
 
+// Add 添加redis实例
+func (p *RedisConnPool) Add(db string) error {
+	if p.redisHandlers[db] != nil {
+		return errors.New("redis实例已存在")
+	}
+	if p.InitDataPool(db) {
+		return nil
+	} else {
+		return errors.New("生成实例失败")
+	}
+}
+
 // Ping 测试连接
 func (p *RedisConnPool) Ping(client *redis.Client) bool {
 	pong, err := client.Ping().Result()
@@ -71,6 +84,15 @@ func (p *RedisConnPool) Ping(client *redis.Client) bool {
 	} else {
 		log.Println(pong)
 		return true
+	}
+}
+
+// Remove 移除句柄
+func (p *RedisConnPool) Remove(db string) {
+	if p.redisHandlers[db] != nil {
+		defer delete(p.redisHandlers, db)
+		g := p.redisHandlers[db]
+		g.Close()
 	}
 }
 
